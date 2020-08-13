@@ -5,67 +5,93 @@
 
 #define INPUT_COMMAND  20
 #define INPUT_LINE 1023
+#define BUFFER_DIMENSION 50
 
-typedef struct {
+//ACTION saves the data of requested actions
+typedef struct{
     char command;
     int first_row;
     int last_row;
     int number;
 } Action;
 
+//the node of the LIST for database with the the strings
 typedef struct node {
     char* string;
-    //int line_number;
     struct node *next;
     struct node *prev;
 }node_t;
+
+//the HISTORY for saving each actions modifications to the database
+typedef struct {
+    char command;
+    int first_row;
+    int last_row;
+    char* old_lines;
+    char* new_lines;
+}History;
+
+int buffer_dimension = 50;
+History all_history[BUFFER_DIMENSION];
+int number_of_total_actions = 0;
 
 typedef struct node line;
 
 int ask_for_action(char *input);
 void find_command(char *input);
-//int convert_to_char(char to_convert);
 void create_action(char command,char *input);
 char* ask_for_line(char *line);
 void push();
 line* create_node(char *new_line);
 void add_line();
-void delete_node(int pos_line);
 void search_and_delete(int number_of_line);
 void search_and_print(int number_of_line);
 char *save_string(char *current_line);
 void search_and_update(int number_of_line);
-
+void undo();
+History* create_history_object(char command,int first_row, int last_row);
+void add_space_to_buffer();
+char* updates_array_of_new_lines(char* new_array_lines,char* new_line);
+char* updates_array_of_old_lines(char* old_array_lines, char* old_line;
+char* creates_array_for_lines(int number_of_lines);
+void add_array_line_history(char* array_of_lines,int old_or_new);
 
 Action current_action;
+//is it the first time we have to save a string? -> if we need to create the first node of the list
 int first_time = 1;
+//the total number of rows that can be found in the database. This number is updated as soon as a line is deleted
 int total_number_of_lines = 0;
+//if an undo is waiting to be processed
+int is_undo_waiting = 0;
+//how many actions we need to undo
+int number_of_undo = 0;
 
+//for managing the list
 line *new, *ptr;
 line * head = NULL, * tail = NULL;
 int number = 0;
-/*
- * indi1 indica la prima riga
- * (ind1,ind2)c -> cambia le righe
- * (ind1,ind2)d -> cancella le righe
- * (ind1,ind2)p -> printa le righe
- * (numero)u -> annullamento di un numero di comandi
- * (numero)r -> annulla l'effetto di undo per un certo numero
- * q -> chiude il programma //done
- *
- * una riga può contenere al massimo 1024 caratteri
- */
 
+/**
+ * Handles the change command.
+ * If first time == 1 we need to create the first node of the list.
+ * Otherwise every c command is either an update (changes an existent line) or a push (creates a new node at the end of the list.
+ * If is_undo_waiting == 1 then the undo command needs to be processed before the change
+ */
 void handle_change(){
+    if(is_undo_waiting == 1) undo();
+    number_of_total_actions++;
+    History* current_change = create_history_object(current_action.command,current_action.first_row,current_action.last_row);
+    //how many lines we need to work with
     int number_of_lines = current_action.last_row - current_action.first_row + 1;
+    char *new_lines_array = creates_array_for_lines(number_of_lines);
+    char *old_lines_array = creates_array_for_lines(number_of_lines);
+    //which is the current line we are working with
     int current_line_number = current_action.first_row;
+    //how many lines that we need to work with are left
     int how_many_lines_left = 0;
 
-    // if ( current_action.first row > tail->line_number) then push
-    //else insert
     if (first_time == 1){
         add_line(current_line_number);
-        //printf("%s\n","im changing first");
         current_line_number++;
         total_number_of_lines ++;
         how_many_lines_left ++;
@@ -73,10 +99,12 @@ void handle_change(){
     first_time = 0;
     if (first_time ==0){
         while( how_many_lines_left< number_of_lines){
+            //if the line is new -> push
             if(current_line_number > total_number_of_lines ){
                 push(current_line_number);
                 total_number_of_lines ++;
             }
+            //if the line already exists and needs an update -> update
             else{
                 search_and_update(current_line_number);
             }
@@ -84,28 +112,51 @@ void handle_change(){
             how_many_lines_left ++;
         }
     }
+    //the last input will always be a dot
     char dot[1] = "" ;
     scanf("%c",dot);
 
 }
 
+/**
+ * Handles the delete command.
+ * If we have a 0,0d command we can resolve it immediately. Otherwise searches for the row that needs
+ * to be deleted and deletes it if it exists.
+ * If is_undo_waiting == 1 then the undo command needs to be processed before the delete
+ */
 void handle_delete(){
-    if(current_action.first_row == 0 && current_action.last_row == 0)
+    if(is_undo_waiting == 1) undo();
+    number_of_total_actions++;
+    History* current_delete = create_history_object(current_action.command,current_action.first_row,current_action.last_row);
+    if(current_action.first_row == 0 && current_action.last_row == 0) {
+        number_of_total_actions++;
         return;
-    int current_line_number= current_action.first_row;
-    int number_of_lines = current_action.last_row - current_action.first_row + 1;
-    for (int i = 0; i < number_of_lines; i ++){
-        search_and_delete(current_line_number);
-        current_line_number ++;
-        total_number_of_lines --;
     }
+    //which is the current line we are working with
+    int current_line_number= current_action.first_row;
+    //how many lines we need to work with
+    int number_of_lines = current_action.last_row - current_action.first_row + 1;
+
+    for (int i = 0; i < number_of_lines; i ++){
+        //if the current row that needs to be deleted doesnt exist then no action can be taken
+        if(current_line_number > total_number_of_lines) return; //TODO maybe different for undo
+        //otherwise deletes the row
+        else search_and_delete(current_line_number);
+    }
+
 }
 
+/**
+ * Handles the print command.
+ * If we have 0,0p we can print a dot immediately.
+ * Otherwise it prints the rows requested
+ * If is_undo_waiting == 1 then the undo command needs to be processed before the print
+ */
 void handle_print(){
+    if(is_undo_waiting == 1) undo();
     if(current_action.first_row == 0 && current_action.last_row == 0)
         printf("%c\n",'.' );
     else{
-        //printf("%s\n","im printing");
         int current_line_number= current_action.first_row;
         int number_of_lines = current_action.last_row - current_action.first_row + 1;
         for (int i = 0; i < number_of_lines; i ++){
@@ -115,15 +166,34 @@ void handle_print(){
     }
 }
 
+/**
+ * Handles the undo command.
+ * If an undo command presents itself then is_undo_waiting is set to true. The undo will take action only if necessary.
+ * If an undo command presents itself after another undo command then the number of actions that will need to be undo will be updated
+ * but the same waiting logic applies
+ */
 void handle_undo(){
-
+    //the number of actions we need to undo is updated
+    number_of_undo = current_action.number;
+    if(is_undo_waiting ==1 ){
+        number_of_undo = number_of_undo + current_action.number;
+    }
+    is_undo_waiting =1;
 }
 
+/**
+ * Handles the redo command
+ */
 void handle_redo(){
-
+    if(is_undo_waiting == 0) return;
+    else{
+        //handles if redo is needed or if undo is needed
+    }
 }
-
-//scans the input and populates the current_action object. Chooses which commands needs to be called
+/**
+ * Scans the input and populates the current_action object. Chooses which commands needs to be called
+ * @param input the command input by the user
+ */
 void find_command(char *input){
 
     if(strchr(input, 'c') != NULL){
@@ -152,7 +222,11 @@ void find_command(char *input){
 
 }
 
-//reads the input from stdin and sends it to a parser
+/**
+ * Reads the input from stdin and sends it to a parser
+ * @param input the command input by the user
+ * @return if the program needs to stop returns 0, otherwise 1
+ */
 int ask_for_action(char *input) {
     fgets(input, INPUT_COMMAND, stdin);
     if(input[0] == 'q') {
@@ -165,7 +239,9 @@ int ask_for_action(char *input) {
 }
 
 int main(int argc, char*argv[]) {
+    //the command request
     char input [INPUT_COMMAND];
+    //does the program needs to keep asking for input?
     int keep_asking = 1;
     while (keep_asking == 1){
         keep_asking = ask_for_action(input);
@@ -173,14 +249,12 @@ int main(int argc, char*argv[]) {
     return 0;
 }
 
-/*int convert_to_char(char to_convert){
-    char temp[2];
-    temp[0] = to_convert;
-    temp[1] = '\0';
-    int converted = (int) strtol(temp,NULL,10);
-    return converted;
-}*/
 
+/**
+ * Updates the current_action with the command type, what lines need changes, and how many lines if undo/redo
+ * @param command the command type of the action
+ * @param input the command input of the user
+ */
 void create_action(char command,char *input){
     current_action.command = command;
     if(command == 'u' || command == 'r'){
@@ -192,25 +266,38 @@ void create_action(char command,char *input){
     current_action.last_row = atoi(strtok(NULL,&command));
 }
 
+/**
+ * Asks to input a string when needed (change command)
+ * @param line where to save the new string
+ * @return the string now with the new data
+ */
 char* ask_for_line(char *line){
     //printf("i ll ask the line\n");
     fgets(line, INPUT_LINE, stdin);
+    //removes the \n as the last char and updates it to \0
     line[strlen(line) -1 ] = '\0';
     char *new_line = save_string(line);
     //printf(">%s\n",line);
     return new_line;
 }
 
+/**
+ * Pushes a new node at the end of the list
+ */
 void push(){
+    //asks for the new line and stores it in memory
     char current_line [INPUT_LINE];
     char* new_line = ask_for_line(current_line);
+    //creates the new node with the new line
     new = create_node(new_line);
+    //if the list does not exist
     if (head == tail && head == NULL){
         head = tail = new;
         head -> next = tail -> next = NULL;
         head -> prev = tail -> prev = NULL;
     }
     else {
+        //puts the node at the end
         tail -> next = new;
         new -> prev = tail;
         tail = new;
@@ -220,6 +307,11 @@ void push(){
     }
 }
 
+/**
+ * Creates a new node of the list with the string
+ * @param new_line the string that needs to be saved in that node
+ * @return the new node
+ */
 line* create_node(char *new_line){
     number ++;
     new = (line *)malloc(sizeof(line));
@@ -250,46 +342,28 @@ void add_line(){
     }
 }
 
-void delete_node(int pos_line){
-    int count = 0, i;
-    line * temp, *prevnode;
-
-    if(head == tail && head == NULL){ printf("ciao");}
-
-    if (number < pos_line ){
-        for (ptr = head, i = 1; i <= number; i++){
-            prevnode = ptr;
-            ptr = ptr -> next;
-            if (pos_line ==1){
-                number --;
-                tail -> next = prevnode -> next;
-                ptr -> prev = prevnode -> prev;
-                head = ptr;
-                free(prevnode);
-                break;
-            }
-            else if(i == pos_line - 1){
-                number --;
-                prevnode -> next = ptr ->next;
-                ptr -> next -> prev = prevnode;
-                free (ptr);
-                break;
-            }
-        }
-    }
-}
-
+/**
+ * Searches for the needed row and prints it
+ * @param number_of_line the row number we want to print
+ */
 void search_and_print(int number_of_line){
     int count_head = 1,i;
     int count_tail = total_number_of_lines;
-    if(head == tail && head == NULL){ printf("ciao");}
-    if(number_of_line <= (total_number_of_lines/2)){
+    //if no Lists exists just print a dot
+    if( head == NULL){
+        printf(". \n");
+        return;
+    }
+    //if the number is lower than the total number of rows/2 the search can start at the head of the list
+    else if(number_of_line <= (total_number_of_lines/2)){
         for (ptr = head, i = 0; i < number; i ++, ptr = ptr -> next){
             if(count_head == number_of_line){
+                //if the string exist it can be printed
                 if (ptr->string != NULL){
                     printf("%s\n",ptr->string);
                     return;
                 }
+                //otherwise a dot
                 else{
                     printf("%c\n",'.' );
                     return;
@@ -298,18 +372,22 @@ void search_and_print(int number_of_line){
             count_head++;
         }
     }
+    //if the number is higher than the total of number of rows/2 the search can start at the tail
     else if(number_of_line > (total_number_of_lines/2)){
         for (ptr = tail, i = 0; i < number; i ++, ptr = ptr -> prev){
             if(count_tail == number_of_line){
+                //if the string exist it can be printed
                 if (ptr->string != NULL){
                     printf("%s\n",ptr->string);
                     return;
                 }
+                    //otherwise a dot
                 else{
                     printf("%c\n",'.' );
                     return;
                 }
             }
+            //if the row is a higher number than the the total number of rows then it does not exist and prints a dot
             else if(count_tail < number_of_line){
                 printf("%c\n",'.' );
                 return;
@@ -320,20 +398,57 @@ void search_and_print(int number_of_line){
 
 }
 
+/**
+ * Searches and deletes the node (but not the string) of the row that needs to be deleted
+ * @param number_of_line the row that needs to be deleted
+ */
 void search_and_delete(int number_of_line){
-    line * temp, *prevnode,*nextnode;
+    line *prevnode,*nextnode;
     int count_head = 1,i;
     int count_tail = total_number_of_lines;
-    if(head == tail && head == NULL){ printf("ciao");}
+    //if the lists does not exists
+    if(head == tail && head == NULL){
+        //the list will need to be created at the next change
+        first_time =1 ;
+        return;}
+    //if the row is the first one
     if (number_of_line == 1){
-        prevnode = ptr;
-        ptr = ptr -> next;
-        tail -> next = prevnode ->next;
-        ptr -> prev = prevnode -> prev;
-        head = ptr;
-        free(prevnode);
+        ptr = head;
+        //if the node is the only one
+        if(head == tail){
+            //resets the Lists
+            free(ptr);
+            head = tail = NULL;
+            first_time = 1;
+            total_number_of_lines--;
+            return;
+        }
+        //the position of the head is shifted
+        head = ptr -> next;
+        head -> next = (ptr -> next) -> next;
+        head -> prev = (ptr->prev) -> prev;
+        free(ptr);
+        total_number_of_lines--;
         return;
     }
+    //if the row is the last node
+    else if(number_of_line > 1 && number_of_line == total_number_of_lines){
+        if(head == tail){
+            free(ptr);
+            head = tail = NULL;
+            first_time = 1;
+            total_number_of_lines--;
+            return;
+        }
+        //the tail is shifted
+        ptr = tail;
+        tail = ptr -> prev;
+        tail -> next = head;
+        free(ptr);
+        total_number_of_lines--;
+        return;
+    }
+    //if the number is lower than the total number of rows/2 the search can start at the head of the list
     else if(number_of_line <= (total_number_of_lines/2)){
         for (ptr = head, i = 0; i < number; i ++, ptr = ptr -> next){
             if(count_head == number_of_line){
@@ -342,11 +457,13 @@ void search_and_delete(int number_of_line){
                 prevnode -> next = nextnode;
                 nextnode -> prev = prevnode;
                 free(ptr);
+                total_number_of_lines--;
                 return;
             }
             count_head ++;
         }
     }
+    //if the number is higher than the total of number of rows/2 the search can start at the tail
     else if(number_of_line > (total_number_of_lines/2)){
         for (ptr = tail, i = 0; i < number; i ++, ptr = ptr -> prev){
             if(count_tail == number_of_line){
@@ -355,6 +472,7 @@ void search_and_delete(int number_of_line){
                 prevnode -> next = nextnode;
                 nextnode -> prev = prevnode;
                 free(ptr);
+                total_number_of_lines--;
                 return;
             }
             count_tail--;
@@ -362,6 +480,11 @@ void search_and_delete(int number_of_line){
     }
 }
 
+/**
+ * Saves the string permanently
+ * @param current_line the string that needs to be saved
+ * @return where the string was saved
+ */
 char *save_string(char *current_line){
     int size = strlen(current_line);
     char *new_string = malloc(size +1);
@@ -369,13 +492,18 @@ char *save_string(char *current_line){
     assert(new_string != NULL);
     return new_string;
 }
-
+/**
+ * Searches for a row and updated the string saved
+ * @param number_of_line
+ */
 void search_and_update(int number_of_line) {
     int i, count_head = 1;
     int count_tail = total_number_of_lines;
+    //asks for the new line
     char current_line[INPUT_LINE];
     char *new_line = ask_for_line(current_line);
 
+    //if the head list does not exists creates a new one
     if (head == tail && head == NULL) {
         if (number_of_line == 1) {
             new = create_node(new_line);
@@ -386,6 +514,7 @@ void search_and_update(int number_of_line) {
 
     }
     else {
+        //if the number is lower than the total number of rows/2 the search can start at the head of the list
         if (number_of_line < (total_number_of_lines / 2)) {
             for (ptr = head, i = 1; i <= number; i++) {
                 if (count_head == number_of_line) {
@@ -396,6 +525,7 @@ void search_and_update(int number_of_line) {
                 count_head++;
             }
         }
+        //if the number is higher than the total of number of rows/2 the search can start at the tail
         else if (number_of_line >= (total_number_of_lines / 2)) {
             for (ptr = tail, i = 1; i <= number; i++) {
                 if (count_tail == number_of_line) {
@@ -410,7 +540,7 @@ void search_and_update(int number_of_line) {
     }
 }
 
-    void search_and_insert(int number_of_line) {
+void search_and_insert(int number_of_line) {
         int i, count_head = 1;
         int count_tail = total_number_of_lines;
         char current_line[INPUT_LINE];
@@ -481,3 +611,37 @@ void search_and_update(int number_of_line) {
         }
     }
 
+void undo(){
+}
+
+History* create_history_object(char command,int first_row, int last_row){
+    History current_history = malloc(sizeof(History));
+    if(all_history[number_of_total_actions] == NULL) add_space_to_buffer();
+    all_history[number_of_total_actions] = current_history;
+    all_history[number_of_total_actions].command = command;
+    all_history[number_of_total_actions].first_row = first_row;
+    all_history[number_of_total_actions].last_row = last_row;
+    return current_history;
+}
+
+void add_space_to_buffer(){
+    buffer_dimension = buffer_dimension * 2;
+    realloc(all_history,buffer_dimension);
+}
+
+char* updates_array_of_new_lines(char* new_array_lines, char* new_line){
+
+}
+
+char* updates_array_of_old_lines(char* old_array_lines, char* old_line){
+
+}
+
+void add_array_line_history(char* array_of_lines,int old_or_new){
+
+}
+
+char* creates_array_for_new_lines(int number_of_lines){
+    char* new_lines_array[number_of_lines] = malloc(sizeof());
+    return new_lines_array;
+}
