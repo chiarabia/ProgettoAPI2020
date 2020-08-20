@@ -39,13 +39,28 @@ typedef struct {
     int number_of_deletes;
 }History;
 
+typedef struct undo{
+    History * action;
+    struct undo * prev;
+}undo_t;
+
+
 int buffer_dimension = BUFFER_DIMENSION;
-History** all_history = NULL;
+//History** all_history = NULL;
 int number_of_total_actions = 0;
 int history_tmp = 0;
 int edit_history = -1;
 
 typedef struct node line;
+typedef struct undo list_undo;
+typedef struct undo list_redo;
+
+list_undo *tail_undo = NULL;
+list_undo *new_action;
+list_undo  *ptr_undo;
+
+list_redo *tail_redo = NULL;
+list_redo *ptr_redo;
 
 int ask_for_action(char *input);
 void find_command(char *input);
@@ -65,10 +80,15 @@ void assign_starting_pointer(node_t* pointer, int new_or_old);
 void assign_ending_pointer(node_t* pointer, int new_or_old);
 void assign_border_pointers(node_t* pointer, int first_or_last);
 void assign_all_history_pointers_to_null();
-void delete_assign_data_of_history(int array_position_for_data);
 void redo();
 void insert_for_undo();
 void insert_for_redo();
+void delete_from_redu_list();
+void delete_undo_and_put_in_redo();
+void delete_redo_and_put_in_undu();
+void assign_to_undo_list_from_redu(list_redo* action);
+void assign_to_redo_list(list_undo* action);
+History* assign_to_undo_list(char command, int first_row,int last_row);
 
 Action current_action;
 //is it the first time we have to save a string? -> if we need to create the first node of the list
@@ -109,8 +129,7 @@ void handle_change(){
             int number_of_frees = number_of_total_actions - history_tmp;
             int action = history_tmp + 1;
             for (i = 0; i< number_of_frees; i++){
-                delete_assign_data_of_history(action);
-                action ++;
+                delete_from_redu_list();
             }
         }
         number_of_total_actions = history_tmp;
@@ -125,8 +144,7 @@ void handle_change(){
             int number_of_frees = number_of_total_actions - history_tmp;
             int action = history_tmp + 1;
             for (i = 0; i< number_of_frees; i++){
-                delete_assign_data_of_history(action);
-                action ++;
+                delete_from_redu_list();
             }
         }
         number_of_total_actions = history_tmp;
@@ -140,8 +158,7 @@ void handle_change(){
             int number_of_frees = number_of_total_actions - history_tmp;
             int action = history_tmp + 1;
             for (i = 0; i< number_of_frees; i++){
-                delete_assign_data_of_history(action);
-                action ++;
+                delete_from_redu_list();
             }
         }
         number_of_total_actions = history_tmp;
@@ -149,7 +166,7 @@ void handle_change(){
 
     number_of_total_actions++;
     history_tmp ++;
-    History* current_change = create_history_object(current_action.command,current_action.first_row,current_action.last_row);
+    History* current_change = assign_to_undo_list(current_action.command,current_action.first_row,current_action.last_row);
     //how many lines we need to work with
     int number_of_lines = current_action.last_row - current_action.first_row + 1;
     //which is the current line we are working with
@@ -157,6 +174,16 @@ void handle_change(){
     //how many lines that we need to work with are left
     int how_many_lines_left = 0;
     int last_line = number_of_lines - how_many_lines_left;
+    current_change->number_of_deletes = 0;
+    current_change->was_change_and_push = -1;
+    current_change->was_delete_not_necessary = -1;
+    current_change->number_of_push = -1;
+
+    if(current_action.first_row == 0 && current_action.last_row == 0){
+        assign_all_history_pointers_to_null();
+        current_change->was_delete_not_necessary = 1;
+        return;
+    }
 
     if (first_time == 1){
         is_push_at_the_tails = 2;
@@ -229,8 +256,7 @@ void handle_delete(){
             int number_of_frees = number_of_total_actions - history_tmp;
             int action = history_tmp + 1;
             for (i = 0; i< number_of_frees; i++){
-                delete_assign_data_of_history(action);
-                action ++;
+                delete_from_redu_list();
             }
         }
         number_of_total_actions = history_tmp;
@@ -244,8 +270,7 @@ void handle_delete(){
             int number_of_frees = number_of_total_actions - history_tmp;
             int action = history_tmp + 1;
             for (i = 0; i< number_of_frees; i++){
-                delete_assign_data_of_history(action);
-                action ++;
+                delete_from_redu_list();
             }
         }
         number_of_total_actions = history_tmp;
@@ -258,7 +283,11 @@ void handle_delete(){
     int number_of_deletes = 0;
     number_of_total_actions++;
     history_tmp ++;
-    History* current_delete = create_history_object(current_action.command,current_action.first_row,current_action.last_row);
+    History* current_delete = assign_to_undo_list(current_action.command,current_action.first_row,current_action.last_row);
+    current_delete->number_of_deletes = -1;
+    current_delete->was_change_and_push = -1;
+    current_delete->was_delete_not_necessary = -1;
+    current_delete->number_of_push = -1;
     if((current_action.first_row == 0 && current_action.last_row == 0) || current_action.first_row > total_number_of_lines) {
         assign_all_history_pointers_to_null();
         current_delete->was_delete_not_necessary = 1;
@@ -341,7 +370,7 @@ void handle_delete(){
  * If is_undo_waiting == 1 then the undo command needs to be processed before the print
  */
 void handle_print(){
-    int i;
+    int i = 0;
     if(is_undo_waiting == 1){
         undo();
         is_undo_waiting = 0;
@@ -359,7 +388,7 @@ void handle_print(){
     else{
         int current_line_number= current_action.first_row;
         int number_of_lines = current_action.last_row - current_action.first_row + 1;
-        for (int i = 0; i < number_of_lines; i ++){
+        for ( i = 0; i < number_of_lines; i ++){
             search_and_print(current_line_number);
             current_line_number ++;
         }
@@ -561,7 +590,7 @@ int ask_for_action(char *input) {
 }
 
 int main(int argc, char*argv[]) {
-    all_history = malloc(BUFFER_DIMENSION * sizeof(History*));
+    //all_history = malloc(BUFFER_DIMENSION * sizeof(History*));
     //the command request
     char input [INPUT_COMMAND];
     //does the program needs to keep asking for input?
@@ -580,13 +609,22 @@ int main(int argc, char*argv[]) {
  */
 void create_action(char command,char *input){
     current_action.command = command;
-    if(command == 'u' || command == 'r'){
-        current_action.number = atoi(strtok(input,&command));
+    if(command == 'u'){
+        current_action.number = atoi(strtok(input,"u"));
+        return;
+    }
+    else if(command == 'r'){
+        current_action.number = atoi(strtok(input,"r"));
         return;
     }
     char delim[] = ",";
     current_action.first_row =  atoi(strtok(input,delim));
-    current_action.last_row = atoi(strtok(NULL,&command));
+    if(command == 'c')
+        current_action.last_row = atoi(strtok(NULL,"c"));
+    else if(command == 'd')
+        current_action.last_row = atoi(strtok(NULL,"d"));
+    else if(command == 'p')
+        current_action.last_row = atoi(strtok(NULL,"p"));
 }
 
 /**
@@ -1072,7 +1110,7 @@ void search_and_update(int number_of_line,int starting_or_ending, int end_change
 
 
 
-History* create_history_object(char command,int first_row, int last_row){
+/*History* create_history_object(char command,int first_row, int last_row){
     History* current_history = malloc(sizeof(History));
     if(number_of_total_actions > buffer_dimension) add_space_to_buffer();
     all_history[number_of_total_actions] = current_history;
@@ -1080,14 +1118,143 @@ History* create_history_object(char command,int first_row, int last_row){
     all_history[number_of_total_actions]->first_row = first_row;
     all_history[number_of_total_actions]->last_row = last_row;
     return current_history;
-}
+}*/
 
-void add_space_to_buffer(){
+/*void add_space_to_buffer(){
     buffer_dimension = buffer_dimension * 2;
+    int tmp_num= number_of_total_actions-1;
+    History* last_action = all_history[tmp_num];
     History** tmp = realloc(all_history,buffer_dimension * sizeof(History*));
     assert(tmp != NULL);
     all_history = tmp;
+    all_history[tmp_num] = last_action;
+    assert(all_history = tmp);
+}*/
+
+History* assign_to_undo_list(char command, int first_row,int last_row){
+    History* current_history = malloc(sizeof(History));
+    new_action = (list_undo *)malloc(sizeof(list_undo));
+    new_action->action = current_history;
+    new_action->action->command = command;
+    new_action->action->first_row = first_row;
+    new_action->action->last_row = last_row;
+    if(tail_undo == NULL){
+        tail_undo = new_action;
+        tail_undo -> prev = NULL;
+    }
+    else{
+        ptr_undo = tail_undo;
+        ptr_undo -> prev = tail_undo -> prev;
+        tail_undo = new_action;
+        tail_undo -> prev = ptr_undo;
+    }
+    return current_history;
 }
+
+void assign_to_redo_list(list_undo* action){
+    if(tail_redo == NULL){
+        tail_redo = action;
+        tail_redo -> prev = NULL;
+    }
+    else{
+        ptr_redo = tail_redo;
+        ptr_redo -> prev = tail_redo ->prev;
+        tail_redo = action;
+        tail_redo -> prev = ptr_redo;
+    }
+}
+
+void assign_to_undo_list_from_redu(list_redo* action){
+    if(tail_undo == NULL){
+        tail_undo = action;
+        tail_undo -> prev = NULL;
+    }
+    else{
+        ptr_undo = tail_undo;
+        ptr_undo -> prev = tail_undo -> prev;
+        tail_undo = action;
+        tail_undo -> prev = ptr_undo;
+    }
+}
+
+void delete_redo_and_put_in_undu(){
+    if(tail_redo == NULL) return;
+    if(tail_redo -> prev == NULL){
+        assign_to_undo_list_from_redu(tail_redo);
+        tail_redo = NULL;
+    }
+    else{
+        ptr_redo = tail_redo -> prev;
+        if((tail_redo->prev)->prev != NULL)
+            ptr_redo ->prev = (tail_redo ->prev)->prev;
+        else
+            ptr_redo -> prev = NULL;
+        assign_to_undo_list_from_redu(tail_redo);
+        tail_redo = ptr_redo;
+    }
+}
+
+void delete_undo_and_put_in_redo(){
+    if(tail_undo == NULL) return;
+    if(tail_undo -> prev == NULL){
+        assign_to_redo_list(tail_undo);
+        tail_undo = NULL;
+    }
+    else{
+        ptr_undo = tail_undo -> prev;
+        if((tail_undo->prev)->prev != NULL)
+            ptr_undo -> prev = (tail_undo -> prev)->prev;
+        else
+            ptr_undo -> prev = NULL;
+        assign_to_redo_list(tail_undo);
+        tail_undo = ptr_undo;
+    }
+}
+
+void delete_from_redu_list(){
+    int number_of_strings = 0;
+    int i;
+    if(tail_redo -> prev == NULL){
+        if(tail_redo->action->command == 'c'){
+            number_of_strings = tail_redo->action->last_row - tail_redo->action->first_row + 1;
+        }
+        else
+            number_of_strings = tail_redo -> action -> number_of_deletes;
+       /* for (i = 0; i < number_of_strings; i ++){
+            if(tail_redo->action->old_lines_starting_pointer != NULL){
+                free(tail_redo->action->old_lines_starting_pointer->string);
+                if(tail_redo->action->old_lines_starting_pointer->next != NULL)
+                    tail_redo->action->old_lines_starting_pointer = tail_redo->action->old_lines_starting_pointer->next;
+            }
+        }*/
+        free(tail_redo->action);
+        ptr_redo = tail_redo;
+        free(ptr_redo);
+        tail_redo = NULL;
+    }
+    else{
+        if(tail_redo->action->command == 'c'){
+            number_of_strings = tail_redo->action->last_row - tail_redo->action->first_row + 1;
+        }
+        else
+            number_of_strings = tail_redo -> action -> number_of_deletes;
+        /*for (i = 0; i < number_of_strings; i ++){
+            if(tail_redo->action->old_lines_starting_pointer != NULL){
+                free(tail_redo->action->old_lines_starting_pointer->string);
+                if(tail_redo->action->old_lines_starting_pointer->next != NULL)
+                    tail_redo->action->old_lines_starting_pointer = tail_redo->action->old_lines_starting_pointer->next;
+            }
+        }*/
+        free(tail_redo->action);
+        ptr_redo = tail_redo;
+        ptr_redo -> prev = tail_redo->prev;
+        tail_redo = ptr_redo -> prev;
+        if((ptr_redo->prev)->prev != NULL)
+            tail_redo -> prev = (ptr_redo -> prev)->prev;
+        free(ptr_redo);
+    }
+
+};
 
 /**
  *
@@ -1096,9 +1263,9 @@ void add_space_to_buffer(){
  */
 void assign_starting_pointer(node_t* pointer, int new_or_old){
     if(new_or_old == 1)
-        all_history[number_of_total_actions]->new_lines_starting_pointer = pointer;
+        tail_undo->action->new_lines_starting_pointer = pointer;
     else
-        all_history[number_of_total_actions]->old_lines_starting_pointer = pointer;
+        tail_undo->action->old_lines_starting_pointer = pointer;
 
 }
 
@@ -1109,9 +1276,9 @@ void assign_starting_pointer(node_t* pointer, int new_or_old){
  */
 void assign_ending_pointer(node_t* pointer, int new_or_old){
     if(new_or_old ==1)
-        all_history[number_of_total_actions]->new_lines_ending_pointer = pointer;
+        tail_undo->action->new_lines_ending_pointer = pointer;
     else
-        all_history[number_of_total_actions]->old_lines_ending_pointer = pointer;
+        tail_undo->action->old_lines_ending_pointer = pointer;
 }
 
 /**
@@ -1121,9 +1288,9 @@ void assign_ending_pointer(node_t* pointer, int new_or_old){
  */
 void assign_border_pointers(node_t* pointer, int first_or_last) {
     if (first_or_last == 1)
-        all_history[number_of_total_actions]->first_node = pointer;
+        tail_undo->action->first_node = pointer;
     else
-        all_history[number_of_total_actions]->last_node = pointer;
+        tail_undo->action->last_node = pointer;
 }
 
 void assign_all_history_pointers_to_null(){
@@ -1134,19 +1301,25 @@ void assign_all_history_pointers_to_null(){
     assign_border_pointers(NULL,1);
     assign_border_pointers(NULL,0);
 }
-void delete_assign_data_of_history(int array_position_for_data){
+/*void delete_assign_data_of_history(int array_position_for_data){
     int i;
-    int number_of_strings = all_history[array_position_for_data]->last_row - all_history[array_position_for_data]->first_row + 1;
-    /*for (i = 0; i < number_of_strings; i ++){
+    int number_of_strings = 0;
+    if(all_history[array_position_for_data]->command == 'c')
+        number_of_strings = all_history[array_position_for_data]->last_row - all_history[array_position_for_data]->first_row + 1;
+    else
+        number_of_strings = all_history[array_position_for_data]->number_of_deletes;
+    *//*for (i = 0; i < number_of_strings; i ++){
         if(all_history[array_position_for_data]->old_lines_starting_pointer != NULL){
             free(all_history[array_position_for_data]->old_lines_starting_pointer->string);
-            all_history[array_position_for_data]->old_lines_starting_pointer = all_history[array_position_for_data]->old_lines_starting_pointer->next;
+            if(all_history[array_position_for_data]->old_lines_starting_pointer->next != NULL)
+                all_history[array_position_for_data]->old_lines_starting_pointer = all_history[array_position_for_data]->old_lines_starting_pointer->next;
         }
-    }*/
-    free(all_history[array_position_for_data]);
+    }*//*
+    if(array_position_for_data != 0)
+        free(all_history[array_position_for_data]);
     all_history[array_position_for_data] = NULL;
     number_of_undo = 0;
-}
+}*/
 
 void undo(){
     int i;
@@ -1154,6 +1327,7 @@ void undo(){
     for(i = 0; i<number_of_undo; i++){
         insert_for_undo();
         history_tmp--;
+        delete_undo_and_put_in_redo();
     }
 }
 
@@ -1163,26 +1337,27 @@ void redo(){
     for(i = 0; i<number_of_redo; i++){
         insert_for_redo();
         history_tmp ++;
+        delete_redo_and_put_in_undu();
     }
 }
 
 void insert_for_undo(){
-    char command = all_history[history_tmp]->command;
-    int first_row = all_history[history_tmp]->first_row;
-    int last_row = all_history[history_tmp]->last_row;
-    node_t* first_node = all_history[history_tmp]->first_node;
-    node_t* last_node = all_history[history_tmp]->last_node;
-    node_t* new_lines_starting_pointer = all_history[history_tmp] -> new_lines_starting_pointer;
-    node_t* new_lines_ending_pointer = all_history[history_tmp] -> new_lines_ending_pointer;
-    node_t* old_lines_starting_pointer = all_history[history_tmp] -> old_lines_starting_pointer;
-    node_t* old_lines_ending_pointer = all_history[history_tmp] -> old_lines_ending_pointer;
-    int number_of_deletes = all_history[history_tmp] ->number_of_deletes;
-    int number_of_push = all_history[history_tmp] -> number_of_push;
-    int change_and_push = all_history[history_tmp] -> was_change_and_push;
+    char command = tail_undo->action->command;
+    int first_row = tail_undo->action->first_row;
+    int last_row = tail_undo->action->last_row;
+    node_t* first_node = tail_undo->action->first_node;
+    node_t* last_node = tail_undo->action->last_node;
+    node_t* new_lines_starting_pointer = tail_undo->action -> new_lines_starting_pointer;
+    node_t* new_lines_ending_pointer = tail_undo->action -> new_lines_ending_pointer;
+    node_t* old_lines_starting_pointer = tail_undo->action -> old_lines_starting_pointer;
+    node_t* old_lines_ending_pointer = tail_undo->action -> old_lines_ending_pointer;
+    int number_of_deletes = tail_undo->action ->number_of_deletes;
+    int number_of_push = tail_undo->action -> number_of_push;
+    int change_and_push = tail_undo->action -> was_change_and_push;
 
     if(command == 'd'){
         //se cancello niente
-        if(all_history[history_tmp]->was_delete_not_necessary == 1){
+        if(tail_undo->action->was_delete_not_necessary == 1){
             return;
         }
         //vuol dire che ho cancellato tutta la lista
@@ -1232,6 +1407,9 @@ void insert_for_undo(){
         }
     }
     else{
+        if(tail_undo->action->was_delete_not_necessary == 1){
+            return;
+        }
         //se scrivo per la prima volta nella lista
         if(first_node == NULL && last_node == NULL && change_and_push != 1 && number_of_push != 0){
             head = tail = NULL;
@@ -1262,7 +1440,7 @@ void insert_for_undo(){
             if(old_lines_ending_pointer ->prev != NULL)
                 (old_lines_ending_pointer->prev)->next = tail;
             //sgancio
-            tail -> next = NULL;
+            //tail -> next = NULL;
             total_number_of_lines = total_number_of_lines - number_of_push;
             return;
         }
@@ -1275,7 +1453,7 @@ void insert_for_undo(){
             last_node -> prev = old_lines_ending_pointer;
             old_lines_ending_pointer -> next = last_node;
             //sgancio
-            new_lines_ending_pointer -> next = NULL;
+            //new_lines_ending_pointer -> next = NULL;
             return;
         }
         //se faccio una change modificando la coda ma niente push
@@ -1287,7 +1465,7 @@ void insert_for_undo(){
             first_node -> next = old_lines_starting_pointer;
             old_lines_starting_pointer -> prev = first_node;
             //sgancio
-            new_lines_starting_pointer -> prev = NULL;
+            //new_lines_starting_pointer -> prev = NULL;
             return;
         }
         //se faccio solo push
@@ -1297,8 +1475,8 @@ void insert_for_undo(){
             if(first_node ->prev != NULL)
                 (first_node->prev)->next = tail;
             //sgancio
-            first_node -> next = NULL;
-            new_lines_starting_pointer -> prev = NULL;
+            //first_node -> next = NULL;
+            //new_lines_starting_pointer -> prev = NULL;
 
             total_number_of_lines = total_number_of_lines - number_of_push;
             return;
@@ -1311,10 +1489,10 @@ void insert_for_undo(){
                 (old_lines_ending_pointer->prev)->next = tail;
             first_node -> next = old_lines_starting_pointer;
             old_lines_starting_pointer -> prev = first_node;
-            tail -> next = NULL;
+            //tail -> next = NULL;
             //sgancio
-            new_lines_starting_pointer -> prev = NULL;
-            new_lines_ending_pointer -> next = NULL;
+            //new_lines_starting_pointer -> prev = NULL;
+            //new_lines_ending_pointer -> next = NULL;
 
             total_number_of_lines = total_number_of_lines - number_of_push;
             return;
@@ -1326,8 +1504,8 @@ void insert_for_undo(){
             last_node -> prev = old_lines_ending_pointer;
             old_lines_ending_pointer -> next = last_node;
             //sgancio
-            new_lines_starting_pointer -> prev = NULL;
-            new_lines_ending_pointer -> next = NULL;
+            //new_lines_starting_pointer -> prev = NULL;
+            //new_lines_ending_pointer -> next = NULL;
             return;
         }
 
@@ -1336,157 +1514,160 @@ void insert_for_undo(){
 }
 
 void insert_for_redo() {
-    char command = all_history[history_tmp +1]->command;
-    int first_row = all_history[history_tmp +1 ]->first_row;
-    int last_row = all_history[history_tmp +1]->last_row;
-    node_t *first_node = all_history[history_tmp +1 ]->first_node;
-    node_t *last_node = all_history[history_tmp +1]->last_node;
-    node_t *new_lines_starting_pointer = all_history[history_tmp +1]->new_lines_starting_pointer;
-    node_t *new_lines_ending_pointer = all_history[history_tmp +1]->new_lines_ending_pointer;
-    node_t *old_lines_starting_pointer = all_history[history_tmp +1]->old_lines_starting_pointer;
-    node_t *old_lines_ending_pointer = all_history[history_tmp +1]->old_lines_starting_pointer;
-    int number_of_deletes = all_history[history_tmp +1]->number_of_deletes;
+    char command = tail_redo->action->command;
+    int first_row = tail_redo->action->first_row;
+    int last_row = tail_redo->action->last_row;
+    node_t *first_node = tail_redo->action->first_node;
+    node_t *last_node = tail_redo->action->last_node;
+    node_t *new_lines_starting_pointer = tail_redo->action->new_lines_starting_pointer;
+    node_t *new_lines_ending_pointer = tail_redo->action->new_lines_ending_pointer;
+    node_t *old_lines_starting_pointer = tail_redo->action->old_lines_starting_pointer;
+    node_t *old_lines_ending_pointer = tail_redo->action->old_lines_starting_pointer;
+    int number_of_deletes = tail_redo->action->number_of_deletes;
     int number_of_lines = last_row - first_row + 1;
-    int number_of_push = all_history[history_tmp+1] -> number_of_push;
-    int change_and_push = all_history[history_tmp+1] -> was_change_and_push;
+    int number_of_push = tail_redo->action->number_of_push;
+    int change_and_push = tail_redo->action->was_change_and_push;
 
     if (command == 'd') {
-        if (all_history[history_tmp + 1]->was_delete_not_necessary == 1) {
+        if (tail_redo->action->was_delete_not_necessary == 1) {
             return;
         }
-        if(first_node == NULL && last_node == NULL){
+        if (first_node == NULL && last_node == NULL) {
             head = tail = NULL;
             first_time = 1;
             total_number_of_lines = 0;
             return;
         }
-        if(first_node == NULL){
+        if (first_node == NULL) {
             head = last_node;
-            last_node -> prev = NULL;
-            head -> next = last_node -> next;
-            if(last_node -> next != NULL)
-                (last_node -> next) -> prev = head;
-            old_lines_ending_pointer -> next = NULL;
+            //last_node->prev = NULL;
+            head->next = last_node->next;
+            if (last_node->next != NULL)
+                (last_node->next)->prev = head;
+            //old_lines_ending_pointer->next = NULL;
             total_number_of_lines = total_number_of_lines - number_of_deletes;
             return;
         }
-        if(last_node == NULL){
+        if (last_node == NULL) {
             tail = first_node;
-            tail -> prev = first_node -> prev;
-            if(first_node ->prev != NULL)
+            tail->prev = first_node->prev;
+            if (first_node->prev != NULL)
                 (first_node->prev)->next = tail;
-            first_node -> next = NULL;
-            old_lines_starting_pointer -> prev = NULL;
+            //first_node->next = NULL;
+            //old_lines_starting_pointer->prev = NULL;
             total_number_of_lines = total_number_of_lines - number_of_deletes;
             return;
         }
-        if(first_node != NULL && last_node != NULL){
-            first_node -> next = last_node;
-            last_node -> prev = first_node;
-            old_lines_starting_pointer -> prev = NULL;
-            old_lines_ending_pointer -> next = NULL;
+        if (first_node != NULL && last_node != NULL) {
+            first_node->next = last_node;
+            last_node->prev = first_node;
+            //old_lines_starting_pointer->prev = NULL;
+            //old_lines_ending_pointer->next = NULL;
             total_number_of_lines = total_number_of_lines - number_of_deletes;
             return;
         }
     } else {
+        if (tail_redo->action->was_delete_not_necessary == 1) {
+            return;
+        }
         //se scrivo per la prima volta nella lista
-        if(first_node == NULL && last_node == NULL && change_and_push != 1 && number_of_push != 0){
+        if (first_node == NULL && last_node == NULL && change_and_push != 1 && number_of_push != 0) {
             head = new_lines_starting_pointer;
-            head -> next = new_lines_starting_pointer -> next;
-            if(new_lines_starting_pointer -> next != NULL)
-                (new_lines_starting_pointer -> next) -> prev = head;
+            head->next = new_lines_starting_pointer->next;
+            if (new_lines_starting_pointer->next != NULL)
+                (new_lines_starting_pointer->next)->prev = head;
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
             first_time = 0;
             total_number_of_lines = number_of_push;
             return;
         }
         //se cambio tutte le stringhe nella lista
-        if(first_node == NULL && last_node == NULL && change_and_push != 1 && number_of_push == 0){
+        if (first_node == NULL && last_node == NULL && change_and_push != 1 && number_of_push == 0) {
             head = new_lines_starting_pointer;
-            head -> next = new_lines_starting_pointer -> next;
-            if(new_lines_starting_pointer -> next != NULL)
-                (new_lines_starting_pointer -> next) -> prev = head;
+            head->next = new_lines_starting_pointer->next;
+            if (new_lines_starting_pointer->next != NULL)
+                (new_lines_starting_pointer->next)->prev = head;
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
             return;
         }
         //se cambio tutte le stringhe e faccio anche delle push
-        if(first_node == NULL && last_node == NULL && change_and_push == 1 && number_of_push != 0){
+        if (first_node == NULL && last_node == NULL && change_and_push == 1 && number_of_push != 0) {
             head = new_lines_starting_pointer;
-            head -> next = new_lines_starting_pointer -> next;
-            if(new_lines_starting_pointer -> next != NULL)
-                (new_lines_starting_pointer -> next) -> prev = head;
+            head->next = new_lines_starting_pointer->next;
+            if (new_lines_starting_pointer->next != NULL)
+                (new_lines_starting_pointer->next)->prev = head;
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
             total_number_of_lines = total_number_of_lines + number_of_push;
             return;
         }
         //se faccio una change senza modificare la coda
-        if(first_node == NULL && last_node != NULL && change_and_push != 1 && number_of_push == 0){
+        if (first_node == NULL && last_node != NULL && change_and_push != 1 && number_of_push == 0) {
             head = new_lines_starting_pointer;
-            head -> next = new_lines_starting_pointer -> next;
-            if(new_lines_starting_pointer -> next != NULL)
-                (new_lines_starting_pointer -> next) -> prev = head;
-            last_node -> prev = new_lines_ending_pointer;
-            new_lines_ending_pointer -> next = last_node;
+            head->next = new_lines_starting_pointer->next;
+            if (new_lines_starting_pointer->next != NULL)
+                (new_lines_starting_pointer->next)->prev = head;
+            last_node->prev = new_lines_ending_pointer;
+            new_lines_ending_pointer->next = last_node;
             //sgancio
-            old_lines_ending_pointer -> next = NULL;
+            //old_lines_ending_pointer->next = NULL;
             return;
         }
         //se faccio una change modificando la coda ma niente push
-        if(last_node == NULL && first_node != NULL && change_and_push != 1 && number_of_push == 0){
+        if (last_node == NULL && first_node != NULL && change_and_push != 1 && number_of_push == 0) {
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
-            first_node -> next = new_lines_starting_pointer;
-            new_lines_starting_pointer -> prev = first_node;
+            first_node->next = new_lines_starting_pointer;
+            new_lines_starting_pointer->prev = first_node;
             //sgancio
-            old_lines_starting_pointer -> prev = NULL;
+            //old_lines_starting_pointer->prev = NULL;
             return;
         }
         //se faccio solo push
-        if(last_node == NULL && first_node != NULL && change_and_push != 1 && number_of_push != 0){
+        if (last_node == NULL && first_node != NULL && change_and_push != 1 && number_of_push != 0) {
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
-            first_node -> next = new_lines_starting_pointer;
-            new_lines_starting_pointer -> prev = first_node;
+            first_node->next = new_lines_starting_pointer;
+            new_lines_starting_pointer->prev = first_node;
 
             total_number_of_lines = total_number_of_lines + number_of_push;
             return;
         }
         //se modifico la coda e faccio anche delle push
-        if(last_node == NULL && first_node != NULL && change_and_push == 1){
-            first_node -> next = new_lines_starting_pointer;
-            new_lines_starting_pointer -> prev = first_node;
+        if (last_node == NULL && first_node != NULL && change_and_push == 1) {
+            first_node->next = new_lines_starting_pointer;
+            new_lines_starting_pointer->prev = first_node;
             tail = new_lines_ending_pointer;
-            tail -> prev = new_lines_ending_pointer -> prev;
-            if(new_lines_ending_pointer ->prev != NULL)
+            tail->prev = new_lines_ending_pointer->prev;
+            if (new_lines_ending_pointer->prev != NULL)
                 (new_lines_ending_pointer->prev)->next = tail;
             //stacco
-            old_lines_starting_pointer -> prev = NULL;
+            //old_lines_starting_pointer->prev = NULL;
 
             total_number_of_lines = total_number_of_lines + number_of_push;
             return;
         }
         //se faccio delle change dentro la struttura senza avere delle push
-        if(last_node != NULL && first_node != NULL && change_and_push != 1){
-            first_node -> next = new_lines_starting_pointer;
-            new_lines_starting_pointer -> prev = first_node;
-            last_node -> prev = new_lines_ending_pointer;
-            new_lines_ending_pointer -> next = last_node;
+        if (last_node != NULL && first_node != NULL && change_and_push != 1) {
+            first_node->next = new_lines_starting_pointer;
+            new_lines_starting_pointer->prev = first_node;
+            last_node->prev = new_lines_ending_pointer;
+            new_lines_ending_pointer->next = last_node;
             //sgancio
-            old_lines_starting_pointer -> prev = NULL;
-            old_lines_ending_pointer-> next = NULL;
+            //old_lines_starting_pointer->prev = NULL;
+            //old_lines_ending_pointer->next = NULL;
             return;
         }
     }
